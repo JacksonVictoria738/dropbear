@@ -72,10 +72,14 @@ jobs:
         # 3. 编译速度极快 (几十秒 vs 几分钟)
         yes "" | make allnoconfig
 
+        # 交叉编译器必须通过环境变量设置, .config 里 CONFIG_CROSS_COMPILER_PREFIX
+        # 解析不可靠, 会导致静默退回 host gcc (产出 x86_64 二进制)
+        export CROSS_COMPILE="${TOOLCHAIN_PREFIX}-"
+        export CC="${TOOLCHAIN_PREFIX}-gcc"
+
         # 只启用 sftp 必须的选项
         cat >> .config << 'EOF'
         CONFIG_STATIC=y
-        CONFIG_CROSS_COMPILER_PREFIX="arm-buildroot-linux-musleabihf-"
         CONFIG_EXTRA_CFLAGS="-mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -Os"
         CONFIG_EXTRA_LDFLAGS="-static"
         CONFIG_SFTP=y
