@@ -65,30 +65,26 @@ jobs:
         tar -xf busybox-1.36.1.tar.bz2
         cd busybox-1.36.1
 
-        # allnoconfig: 关闭所有 applet, 只编译需要的 sftp-server
-        # 优势:
-        # 1. 二进制极小 (~100KB vs ~1MB)
-        # 2. 不会碰到无关 applet 的 musl 头文件兼容问题 (tc/slattach 等)
-        # 3. 编译速度极快 (几十秒 vs 几分钟)
-        yes "" | make allnoconfig
+        # defconfig: 唯一保证核心选项 (LFS/shell/libc 适配) 全部正确的基线
+        # allnoconfig 会关掉 CONFIG_LFS 导致 musl 64-bit off_t 与 32-bit uoff_t 冲突
+        make defconfig
 
-        # 交叉编译器必须通过环境变量设置, .config 里 CONFIG_CROSS_COMPILER_PREFIX
-        # 解析不可靠, 会导致静默退回 host gcc (产出 x86_64 二进制)
+        # 交叉编译器必须通过环境变量设置
         export CROSS_COMPILE="${TOOLCHAIN_PREFIX}-"
         export CC="${TOOLCHAIN_PREFIX}-gcc"
 
-        # 只启用 sftp 必须的选项
+        # 用 sed 修改已有行 (而非 append 重复行), oldconfig 不会将其改回
+        sed -i 's/^CONFIG_TC=y$/# CONFIG_TC is not set/' .config
+
+        # 覆盖静态链接 + Cortex-A7 优化 + 确保 SFTP 服务端
         cat >> .config << 'EOF'
         CONFIG_STATIC=y
+        # CONFIG_PIE is not set
+        CONFIG_FEATURE_SFTP_SERVER=y
         CONFIG_EXTRA_CFLAGS="-mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -Os"
         CONFIG_EXTRA_LDFLAGS="-static"
-        CONFIG_SFTP=y
-        CONFIG_FEATURE_SFTP_SERVER=y
-        CONFIG_INSTALL_NO_USR=y
-        CONFIG_FEATURE_PREFER_APPLETS=y
         EOF
 
-        # oldconfig 只询问 allnoconfig 之后新增的 Kconfig 选项
         yes "" | make oldconfig
         make -j$(nproc)
 
