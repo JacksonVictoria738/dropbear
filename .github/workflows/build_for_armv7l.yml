@@ -1,0 +1,52 @@
+name: Cross Compile Dropbear for Rockchip uClibc for armv7l
+
+on:
+  workflow_dispatch: # 支持手动点击运行
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget xz-utils make gcc
+
+    - name: Download uClibc Toolchain
+      run: |
+        # 下载 Bootlin 提供的稳定 armv7-eabi uclibc 硬浮点交叉编译工具链
+        wget https://toolchains.bootlin.com/downloads/releases/toolchains/armv7-eabi-uclibc/tarballs/armv7-eabi-uclibc--stable-2024.05-1.tar.xz
+        tar -xf armv7-eabi-uclibc--stable-2024.05-1.tar.xz
+        echo "$(pwd)/armv7-eabi-uclibc--stable-2024.05-1/bin" >> $GITHUB_PATH
+
+    - name: Download Dropbear Source
+      run: |
+        # 自动获取最新稳定版 Dropbear 源码，你也可以换成特定版本
+        wget https://matt.ucc.asn.au/dropbear/releases/dropbear-2024.85.tar.bz2
+        tar -xf dropbear-2024.85.tar.bz2
+        
+    - name: Configure and Compile
+      run: |
+        cd dropbear-2024.85
+        
+        # 配置交叉编译参数，硬浮点并指向 uclibc
+        ./configure --host=arm-linux-gcc \
+                    CC=arm-linux-gcc \
+                    --disable-zlib \
+                    --disable-syslog
+        
+        # 编译为多合一二进制文件 (Multi-binary)
+        make MULTI=1 PROGRAMS="dropbear dropbearkey dbclient scp"
+        
+        # 检查编译出来的文件架构
+        file dropbearmulti
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: dropbearmulti-rockchip-uclibc
+        path: dropbear-2024.85/dropbearmulti
