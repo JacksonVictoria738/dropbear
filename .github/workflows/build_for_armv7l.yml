@@ -90,13 +90,16 @@ jobs:
 
         yes "" | make oldconfig
 
-        # 验证关键配置是否生效
-        echo "=== Checking CONFIG_STATIC ==="
-        grep -E 'CONFIG_STATIC|CONFIG_PIE|CONFIG_EXTRA' .config
+        # oldconfig 可能吞掉我们的配置, 用 sed 强制锁定关键选项
+        sed -i 's/.*CONFIG_FEATURE_SFTP_SERVER.*/CONFIG_FEATURE_SFTP_SERVER=y/' .config
+        sed -i 's/.*CONFIG_SFTP.*/CONFIG_SFTP=y/' .config
+        sed -i 's/.*CONFIG_STATIC.*/CONFIG_STATIC=y/' .config
 
-        # CONFIG_EXTRA_LDFLAGS 和 CONFIG_STATIC 处理静态链接
-        # BusyBox Makefile 用 := 清空环境 CFLAGS/LDFLAGS, 必须走 .config 路径
-        # EXTRA_LDFLAGS 是 Make 变量, 不走环境变量覆盖, 作为第二道保险
+        echo "=== Verification: SFTP & STATIC ==="
+        grep -E 'CONFIG_SFTP|CONFIG_STATIC|CONFIG_PIE' .config
+
+        # BusyBox Makefile 用 := 清空环境 CFLAGS/LDFLAGS
+        # EXTRA_LDFLAGS 是 Make 变量, 作为静态链接的第二道保险
         make EXTRA_LDFLAGS="-static" -j$(nproc)
 
         echo "=== Verifying static binary ==="
