@@ -34,8 +34,8 @@ jobs:
 
     - name: Configure and Compile
       run: |
-        # 目标架构: ARMv7 Cortex-A7, VFPv4 + NEON 硬浮点, uClibc
-        # CPU part 0xc07 = Cortex-A7, 内核 5.10.160
+        # 目标设备: Rockchip ARMv7 (Cortex-A7 r0p5), uClibc 1.0.31
+        # 内核 5.10.160, CPU part 0xc07
         TOOLCHAIN_PREFIX="arm-buildroot-linux-uclibcgnueabihf"
 
         # 针对 Cortex-A7 优化: -mcpu=cortex-a7 启用所有 Cortex-A7 指令
@@ -43,7 +43,13 @@ jobs:
         # -mfloat-abi=hard 硬浮点 ABI (与 eabihf 工具链一致)
         # -Os 优化体积 (嵌入式设备)
         export CFLAGS="-mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -Os"
-        export LDFLAGS="-Wl,--hash-style=gnu"
+
+        # -static: 必须静态链接!
+        # 工具链使用 uClibc-ng，目标设备使用 uClibc 1.0.31（原始版本）
+        # fexecve / explicit_bzero / __ctype_b_loc 等符号在 uClibc-ng 中存在
+        # 但在设备 uClibc 1.0.31 中不存在，动态链接会导致运行时符号解析失败
+        # 静态链接将所有 libc 函数直接编译进二进制，自包含、无运行时依赖
+        export LDFLAGS="-static -Wl,--hash-style=gnu"
 
         ./configure --host=${TOOLCHAIN_PREFIX} \
                     CC=${TOOLCHAIN_PREFIX}-gcc \
@@ -59,8 +65,8 @@ jobs:
         # 在日志里打印架构属性，方便直接确认
         echo "=== Binary Architecture Info ==="
         file dropbearmulti
-        echo "=== Linked Libraries ==="
-        ${TOOLCHAIN_PREFIX}-readelf -d dropbearmulti 2>/dev/null || true
+        echo "=== Dynamic Linking (should be 'statically linked' or empty) ==="
+        ${TOOLCHAIN_PREFIX}-readelf -d dropbearmulti 2>/dev/null || echo "(static binary, no dynamic section)"
 
     - name: Package Binary (tar preserves exec permissions)
       run: |
