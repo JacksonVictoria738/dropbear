@@ -16,45 +16,33 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y wget xz-utils make gcc bzip2
+        sudo apt-get install -y wget xz-utils make gcc bzip2 cpio
 
     - name: Download musl Toolchain
       run: |
-        # Bootlin 官方 armv7 硬浮点 + musl 稳定版工具链
-        # 目标设备: Rockchip ARMv7 (Cortex-A7 r0p5), uClibc 1.0.31
-        # 设备特性: half thumb fastmult vfp edsp neon vfpv3 tls vfpv4 idiva idivt vfpd32 lpae
-        #
-        # 为什么用 musl 而不是 uClibc-ng:
-        # - uClibc-ng 静态链接依赖 vDSO 获取时间, ARM 旧内核上 vDSO 初始化可能失败
-        #   导致 gettimeofday() 返回随机值 (体现为 Dropbear 日志时间戳乱跳)
-        # - uClibc-ng fexecve re-exec 后静态二进制二次初始化可能崩溃 (kex Connection reset)
-        # - musl 静态链接是一等公民, 直接走 syscall 不依赖 vDSO, 行为确定
-        # - 静态链接后二进制自包含, 不依赖目标设备的 libc 版本
+        # Bootlin armv7 硬浮点 + musl 稳定版工具链
+        # 目标: Rockchip ARMv7 Cortex-A7 r0p5, uClibc 1.0.31, 内核 5.10.160
         wget https://toolchains.bootlin.com/downloads/releases/toolchains/armv7-eabihf/tarballs/armv7-eabihf--musl--stable-2024.05-1.tar.xz
         tar -xf armv7-eabihf--musl--stable-2024.05-1.tar.xz
-
         echo "$(pwd)/armv7-eabihf--musl--stable-2024.05-1/bin" >> $GITHUB_PATH
 
-    - name: Configure and Compile
+    - name: Build Dropbear
       run: |
-        # 目标设备: Rockchip ARMv7 (Cortex-A7 r0p5), uClibc 1.0.31
-        # 内核 5.10.160, CPU part 0xc07
         TOOLCHAIN_PREFIX="arm-buildroot-linux-musleabihf"
 
-        # 针对 Cortex-A7 优化
-        # -mcpu=cortex-a7    目标 Cortex-A7, 启用 thumb/edsp/idiv 等扩展
-        # -mfpu=neon-vfpv4   匹配设备 VFPv4 + NEON
-        # -mfloat-abi=hard   硬浮点 ABI (eabihf)
-        # -Os                优化体积 (嵌入式设备)
-        export CFLAGS="-mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -Os"
+        # 覆盖默认 sftp-server 路径, 指向同目录下的 sftp-server
+        cat > localoptions.h << 'HEREDOC'
+        /* sftp-server: BusyBox 静态编译, 与 dropbearmulti 同目录部署 */
+        #undef SFTPSERVER_PATH
+        #define SFTPSERVER_PATH "/oem/tool/sftp-server"
+        HEREDOC
 
-        # -static: musl 静态链接, 自包含无运行时依赖
-        # musl 的 syscall 直通机制不依赖 vDSO, 避免 uClibc-ng 的时间戳异常
+        # Cortex-A7 + VFPv4/NEON 硬浮点, 优化体积
+        export CFLAGS="-mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -Os"
         export LDFLAGS="-static -Wl,--hash-style=gnu"
 
-        # ac_cv_func_fexecve=no: 禁用 re-exec 特性
-        # fexecve 在静态二进制中会导致子进程 re-exec 后 C 库二次初始化异常
-        # 回退到传统 fork 模型, 更稳定
+        # --enable-static: 正确设置静态构建标志
+        # ac_cv_func_fexecve=no: 禁用 re-exec, 避免静态二进制 fexecve 后崩溃
         ./configure --host=${TOOLCHAIN_PREFIX} \
                     CC=${TOOLCHAIN_PREFIX}-gcc \
                     --enable-static \
@@ -62,26 +50,64 @@ jobs:
                     --disable-syslog \
                     ac_cv_func_fexecve=no
 
-        # 编译多合一二进制文件 (Multi-binary)
         make MULTI=1 PROGRAMS="dropbear dropbearkey dbclient scp"
-
-        # 裁剪符号表, 减小嵌入式设备上的二进制体积
         ${TOOLCHAIN_PREFIX}-strip dropbearmulti
 
-        # 验证: 打印架构和链接信息
-        echo "=== Binary Architecture Info ==="
+        echo "=== dropbearmulti ==="
         file dropbearmulti
-        echo "=== Dynamic Section (should be empty for static binary) ==="
-        ${TOOLCHAIN_PREFIX}-readelf -d dropbearmulti 2>/dev/null || echo "(static binary, no dynamic section)"
+        ${TOOLCHAIN_PREFIX}-readelf -d dropbearmulti 2>/dev/null || echo "(static binary)"
 
-    - name: Package Binary (tar preserves exec permissions)
+    - name: Build BusyBox sftp-server
       run: |
-        # GitHub artifact zip 包会丢失 +x 权限
-        # tar 打包保留权限位, 设备端 tar -xf 即可直接运行
-        tar -cvf dropbearmulti-rockchip-armv7-musl.tar dropbearmulti
+        TOOLCHAIN_PREFIX="arm-buildroot-linux-musleabihf"
+        TOOLCHAIN_DIR="${{ github.workspace }}/armv7-eabihf--musl--stable-2024.05-1"
+
+        wget https://busybox.net/downloads/busybox-1.36.1.tar.bz2
+        tar -xf busybox-1.36.1.tar.bz2
+        cd busybox-1.36.1
+
+        # allnoconfig: 最小基线, olddefconfig 自动拉入依赖
+        make allnoconfig
+
+        ./scripts/config --enable  CONFIG_STATIC
+        ./scripts/config --enable  CONFIG_INSTALL_NO_USR
+        ./scripts/config --enable  CONFIG_FEATURE_PREFER_APPLETS
+        ./scripts/config --enable  CONFIG_FEATURE_SH_STANDALONE
+
+        # 只启用 SFTP (客户端 + 服务端)
+        ./scripts/config --enable  CONFIG_SFTP
+        ./scripts/config --enable  CONFIG_FEATURE_SFTP_SERVER
+
+        # 交叉编译器设置
+        ./scripts/config --set-str CONFIG_CROSS_COMPILER_PREFIX "${TOOLCHAIN_PREFIX}-"
+        ./scripts/config --set-str CONFIG_SYSROOT "${TOOLCHAIN_DIR}/${TOOLCHAIN_PREFIX}/sysroot"
+        ./scripts/config --set-str CONFIG_EXTRA_CFLAGS "-mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -Os"
+        ./scripts/config --set-str CONFIG_EXTRA_LDFLAGS "-static"
+
+        # 自动解决 Kconfig 依赖
+        make olddefconfig
+        make -j$(nproc)
+
+        # BusyBox 通过 argv[0] 识别 applet
+        # 命名为 sftp-server → 自动进入 SFTP 服务端模式
+        cp busybox ../sftp-server
+        cd ..
+
+        ${TOOLCHAIN_PREFIX}-strip sftp-server
+
+        echo "=== sftp-server ==="
+        file sftp-server
+
+    - name: Package Artifacts
+      run: |
+        tar -cvf dropbear-bundle-rockchip-armv7.tar \
+            dropbearmulti \
+            sftp-server
+        echo "=== Bundle Contents ==="
+        tar -tvf dropbear-bundle-rockchip-armv7.tar
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: dropbearmulti-rockchip-armv7-musl
-        path: dropbearmulti-rockchip-armv7-musl.tar
+        name: dropbear-bundle-rockchip-armv7
+        path: dropbear-bundle-rockchip-armv7.tar
