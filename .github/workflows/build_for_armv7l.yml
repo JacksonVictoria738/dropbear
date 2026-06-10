@@ -69,9 +69,12 @@ jobs:
         # allnoconfig 会关掉 CONFIG_LFS 导致 musl 64-bit off_t 与 32-bit uoff_t 冲突
         make defconfig
 
-        # 交叉编译器必须通过环境变量设置
+        # 交叉编译器 + 静态链接标志必须通过环境变量
+        # .config 的 CONFIG_STATIC/CONFIG_EXTRA_LDFLAGS 可能被 oldconfig 吞掉
         export CROSS_COMPILE="${TOOLCHAIN_PREFIX}-"
         export CC="${TOOLCHAIN_PREFIX}-gcc"
+        export CFLAGS="-mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -Os -static"
+        export LDFLAGS="-static"
 
         # 用 sed 修改已有行 (而非 append 重复行), oldconfig 不会将其改回
         sed -i 's/^CONFIG_TC=y$/# CONFIG_TC is not set/' .config
@@ -81,12 +84,24 @@ jobs:
         CONFIG_STATIC=y
         # CONFIG_PIE is not set
         CONFIG_FEATURE_SFTP_SERVER=y
-        CONFIG_EXTRA_CFLAGS="-mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -Os"
+        CONFIG_EXTRA_CFLAGS="-mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -Os -static"
         CONFIG_EXTRA_LDFLAGS="-static"
         EOF
 
         yes "" | make oldconfig
-        make -j$(nproc)
+
+        # 验证关键配置是否生效
+        echo "=== Checking CONFIG_STATIC ==="
+        grep -E 'CONFIG_STATIC|CONFIG_PIE|CONFIG_EXTRA' .config
+
+        # CONFIG_EXTRA_LDFLAGS 和 CONFIG_STATIC 处理静态链接
+        # BusyBox Makefile 用 := 清空环境 CFLAGS/LDFLAGS, 必须走 .config 路径
+        # EXTRA_LDFLAGS 是 Make 变量, 不走环境变量覆盖, 作为第二道保险
+        make EXTRA_LDFLAGS="-static" -j$(nproc)
+
+        echo "=== Verifying static binary ==="
+        file busybox
+        ${TOOLCHAIN_PREFIX}-readelf -d busybox 2>/dev/null || echo "(no dynamic section)"
 
         cp busybox ../sftp-server
         cd ..
