@@ -66,26 +66,51 @@ jobs:
         tar -xf busybox-1.36.1.tar.bz2
         cd busybox-1.36.1
 
-        # allnoconfig: 最小基线, olddefconfig 自动拉入依赖
-        make allnoconfig
+        # defconfig: 可靠基线, 保证所有 Kconfig 基础设施可用
+        make defconfig
 
+        # 编译 host 端 scripts/config 工具 (必须先编译才能用)
+        make scripts/config
+
+        # 启用静态链接
         ./scripts/config --enable  CONFIG_STATIC
+        ./scripts/config --disable CONFIG_PIE
+
+        # 精简无关 applet (减小体积, 同时也避免依赖问题)
+        ./scripts/config --disable CONFIG_ASH
+        ./scripts/config --disable CONFIG_HUSH
+        ./scripts/config --disable CONFIG_SH_IS_ASH
+        ./scripts/config --disable CONFIG_SH_IS_HUSH
+        ./scripts/config --enable  CONFIG_SH_IS_NONE
+        ./scripts/config --disable CONFIG_VI
+        ./scripts/config --disable CONFIG_UDHCPC
+        ./scripts/config --disable CONFIG_UDHCPD
+        ./scripts/config --disable CONFIG_WGET
+        ./scripts/config --disable CONFIG_TELNET
+        ./scripts/config --disable CONFIG_TELNETD
+        ./scripts/config --disable CONFIG_HTTPD
+        ./scripts/config --disable CONFIG_NTPD
+        ./scripts/config --disable CONFIG_TFTP
+        ./scripts/config --disable CONFIG_FTPGET
+        ./scripts/config --disable CONFIG_FTPPUT
+
+        # 确保 sftp (客户端 + 服务端) 启用
+        ./scripts/config --enable  CONFIG_SFTP
+        ./scripts/config --enable  CONFIG_FEATURE_SFTP_SERVER
+
+        # 保证独立运行所需的基础设施
         ./scripts/config --enable  CONFIG_INSTALL_NO_USR
         ./scripts/config --enable  CONFIG_FEATURE_PREFER_APPLETS
         ./scripts/config --enable  CONFIG_FEATURE_SH_STANDALONE
 
-        # 只启用 SFTP (客户端 + 服务端)
-        ./scripts/config --enable  CONFIG_SFTP
-        ./scripts/config --enable  CONFIG_FEATURE_SFTP_SERVER
-
-        # 交叉编译器设置
+        # 交叉编译器 + 优化标志
         ./scripts/config --set-str CONFIG_CROSS_COMPILER_PREFIX "${TOOLCHAIN_PREFIX}-"
         ./scripts/config --set-str CONFIG_SYSROOT "${TOOLCHAIN_DIR}/${TOOLCHAIN_PREFIX}/sysroot"
         ./scripts/config --set-str CONFIG_EXTRA_CFLAGS "-mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -Os"
         ./scripts/config --set-str CONFIG_EXTRA_LDFLAGS "-static"
 
-        # 自动解决 Kconfig 依赖
-        make olddefconfig
+        # 自动解决 Kconfig 依赖 (不会交互式提问)
+        yes "" | make oldconfig
         make -j$(nproc)
 
         # BusyBox 通过 argv[0] 识别 applet
