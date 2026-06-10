@@ -62,8 +62,14 @@ jobs:
         echo "=== Linked Libraries ==="
         ${TOOLCHAIN_PREFIX}-readelf -d dropbearmulti 2>/dev/null || true
 
+    - name: Package Binary (tar preserves exec permissions)
+      run: |
+        # GitHub artifact 以 zip 打包会丢失可执行权限
+        # 先用 tar 打包，保留 +x 权限位，设备端 tar -xf 即可直接运行
+        tar -cvf dropbearmulti-rockchip-armv7-uclibc.tar dropbearmulti
+
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: dropbearmulti-rockchip-armv7-uclibc
-        path: dropbearmulti
+        path: dropbearmulti-rockchip-armv7-uclibc.tar
