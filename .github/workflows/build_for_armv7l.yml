@@ -65,25 +65,25 @@ jobs:
         tar -xf busybox-1.36.1.tar.bz2
         cd busybox-1.36.1
 
-        # defconfig: 生成完整有效的 .config 基线
+        # defconfig 是唯一保证全量 Kconfig 依赖正确的基线
         make defconfig
 
-        # 直接 append 覆盖项, Kconfig 取最后出现的值
+        # 覆盖必要配置 (后面 append 的值会覆盖前面的)
         cat >> .config << 'EOF'
         CONFIG_STATIC=y
         # CONFIG_PIE is not set
         CONFIG_FEATURE_SFTP_SERVER=y
         CONFIG_CROSS_COMPILER_PREFIX="arm-buildroot-linux-musleabihf-"
-        CONFIG_SYSROOT=""
         CONFIG_EXTRA_CFLAGS="-mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -Os"
         CONFIG_EXTRA_LDFLAGS="-static"
+        # 编译失败的不需要的 applet, 直接关掉
+        # CONFIG_TC is not set
         EOF
 
-        # 非交互式解决所有 (NEW) 选项, 默认回车
+        # 批处理所有 (NEW) 选项
         yes "" | make oldconfig
         make -j$(nproc)
 
-        # BusyBox 通过 argv[0] 识别 applet, 命名为 sftp-server 自动进入服务端模式
         cp busybox ../sftp-server
         cd ..
 
