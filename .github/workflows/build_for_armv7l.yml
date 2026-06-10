@@ -1,7 +1,12 @@
-name: Cross Compile Dropbear for Rockchip uClibc
+name: Cross Compile Dropbear for Rockchip ARMv7 uClibc
 
 on:
   workflow_dispatch: # 支持手动点击运行
+  push:
+    branches: [master]
+    paths-ignore:
+      - '**.md'
+      - '.github/workflows/**'
 
 jobs:
   build:
@@ -18,37 +23,47 @@ jobs:
 
     - name: Download uClibc Toolchain
       run: |
-        # 修正后的 Bootlin 官方 armv7 硬浮点 + uClibc 稳定版工具链链接
+        # Bootlin 官方 armv7 硬浮点 + uClibc-ng 稳定版工具链
+        # 目标设备: Rockchip ARMv7 (Cortex-A7 r0p5), uClibc 1.0.31
+        # 设备特性: half thumb fastmult vfp edsp neon vfpv3 tls vfpv4 idiva idivt vfpd32 lpae
         wget https://toolchains.bootlin.com/downloads/releases/toolchains/armv7-eabihf/tarballs/armv7-eabihf--uclibc--stable-2024.05-1.tar.xz
         tar -xf armv7-eabihf--uclibc--stable-2024.05-1.tar.xz
-        
+
         # 将解压后的工具链 bin 目录加入到系统的 PATH 环境中
         echo "$(pwd)/armv7-eabihf--uclibc--stable-2024.05-1/bin" >> $GITHUB_PATH
 
-    - name: Download Dropbear Source
-      run: |
-        # 获取稳定版 Dropbear 源码
-        wget https://matt.ucc.asn.au/dropbear/releases/dropbear-2024.85.tar.bz2
-        tar -xf dropbear-2024.85.tar.bz2
-        
     - name: Configure and Compile
       run: |
-        cd dropbear-2024.85
-        
-        # 使用工具链中的交叉编译器进行配置
-        ./configure --host=arm-buildroot-linux-uclibcgnueabihf \
-                    CC=arm-buildroot-linux-uclibcgnueabihf-gcc \
+        # 目标架构: ARMv7 Cortex-A7, VFPv4 + NEON 硬浮点, uClibc
+        # CPU part 0xc07 = Cortex-A7, 内核 5.10.160
+        TOOLCHAIN_PREFIX="arm-buildroot-linux-uclibcgnueabihf"
+
+        # 针对 Cortex-A7 优化: -mcpu=cortex-a7 启用所有 Cortex-A7 指令
+        # -mfpu=neon-vfpv4 匹配设备 VFPv4+NEON 特性
+        # -mfloat-abi=hard 硬浮点 ABI (与 eabihf 工具链一致)
+        # -Os 优化体积 (嵌入式设备)
+        export CFLAGS="-mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -Os"
+        export LDFLAGS="-Wl,--hash-style=gnu"
+
+        ./configure --host=${TOOLCHAIN_PREFIX} \
+                    CC=${TOOLCHAIN_PREFIX}-gcc \
                     --disable-zlib \
                     --disable-syslog
-        
+
         # 编译多合一二进制文件 (Multi-binary)
         make MULTI=1 PROGRAMS="dropbear dropbearkey dbclient scp"
-        
-        # 在 log 里打印架构属性，方便直接确认
+
+        # 裁剪调试符号，减小嵌入式设备上的二进制体积
+        ${TOOLCHAIN_PREFIX}-strip dropbearmulti
+
+        # 在日志里打印架构属性，方便直接确认
+        echo "=== Binary Architecture Info ==="
         file dropbearmulti
+        echo "=== Linked Libraries ==="
+        ${TOOLCHAIN_PREFIX}-readelf -d dropbearmulti 2>/dev/null || true
 
     - name: Upload Artifact
-      uses: artifacts/upload-artifact@v4
+      uses: actions/upload-artifact@v4
       with:
-        name: dropbearmulti-rockchip-uclibc
-        path: dropbear-2024.85/dropbearmulti
+        name: dropbearmulti-rockchip-armv7-uclibc
+        path: dropbearmulti
