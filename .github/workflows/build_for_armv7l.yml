@@ -1,4 +1,4 @@
-name: Cross Compile Dropbear for Rockchip uClibc for armv7l
+name: Cross Compile Dropbear for Rockchip uClibc
 
 on:
   workflow_dispatch: # 支持手动点击运行
@@ -14,18 +14,20 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y wget xz-utils make gcc
+        sudo apt-get install -y wget xz-utils make gcc bzip2
 
     - name: Download uClibc Toolchain
       run: |
-        # 下载 Bootlin 提供的稳定 armv7-eabi uclibc 硬浮点交叉编译工具链
-        wget https://toolchains.bootlin.com/downloads/releases/toolchains/armv7-eabi-uclibc/tarballs/armv7-eabi-uclibc--stable-2024.05-1.tar.xz
-        tar -xf armv7-eabi-uclibc--stable-2024.05-1.tar.xz
-        echo "$(pwd)/armv7-eabi-uclibc--stable-2024.05-1/bin" >> $GITHUB_PATH
+        # 修正后的 Bootlin 官方 armv7 硬浮点 + uClibc 稳定版工具链链接
+        wget https://toolchains.bootlin.com/downloads/releases/toolchains/armv7-eabihf/tarballs/armv7-eabihf--uclibc--stable-2024.05-1.tar.xz
+        tar -xf armv7-eabihf--uclibc--stable-2024.05-1.tar.xz
+        
+        # 将解压后的工具链 bin 目录加入到系统的 PATH 环境中
+        echo "$(pwd)/armv7-eabihf--uclibc--stable-2024.05-1/bin" >> $GITHUB_PATH
 
     - name: Download Dropbear Source
       run: |
-        # 自动获取最新稳定版 Dropbear 源码，你也可以换成特定版本
+        # 获取稳定版 Dropbear 源码
         wget https://matt.ucc.asn.au/dropbear/releases/dropbear-2024.85.tar.bz2
         tar -xf dropbear-2024.85.tar.bz2
         
@@ -33,20 +35,20 @@ jobs:
       run: |
         cd dropbear-2024.85
         
-        # 配置交叉编译参数，硬浮点并指向 uclibc
-        ./configure --host=arm-linux-gcc \
-                    CC=arm-linux-gcc \
+        # 使用工具链中的交叉编译器进行配置
+        ./configure --host=arm-buildroot-linux-uclibcgnueabihf \
+                    CC=arm-buildroot-linux-uclibcgnueabihf-gcc \
                     --disable-zlib \
                     --disable-syslog
         
-        # 编译为多合一二进制文件 (Multi-binary)
+        # 编译多合一二进制文件 (Multi-binary)
         make MULTI=1 PROGRAMS="dropbear dropbearkey dbclient scp"
         
-        # 检查编译出来的文件架构
+        # 在 log 里打印架构属性，方便直接确认
         file dropbearmulti
 
     - name: Upload Artifact
-      uses: actions/upload-artifact@v4
+      uses: artifacts/upload-artifact@v4
       with:
         name: dropbearmulti-rockchip-uclibc
         path: dropbear-2024.85/dropbearmulti
