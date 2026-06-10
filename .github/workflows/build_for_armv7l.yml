@@ -65,22 +65,26 @@ jobs:
         tar -xf busybox-1.36.1.tar.bz2
         cd busybox-1.36.1
 
-        # defconfig 是唯一保证全量 Kconfig 依赖正确的基线
-        make defconfig
+        # allnoconfig: 关闭所有 applet, 只编译需要的 sftp-server
+        # 优势:
+        # 1. 二进制极小 (~100KB vs ~1MB)
+        # 2. 不会碰到无关 applet 的 musl 头文件兼容问题 (tc/slattach 等)
+        # 3. 编译速度极快 (几十秒 vs 几分钟)
+        yes "" | make allnoconfig
 
-        # 覆盖必要配置 (后面 append 的值会覆盖前面的)
+        # 只启用 sftp 必须的选项
         cat >> .config << 'EOF'
         CONFIG_STATIC=y
-        # CONFIG_PIE is not set
-        CONFIG_FEATURE_SFTP_SERVER=y
         CONFIG_CROSS_COMPILER_PREFIX="arm-buildroot-linux-musleabihf-"
         CONFIG_EXTRA_CFLAGS="-mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -Os"
         CONFIG_EXTRA_LDFLAGS="-static"
-        # 编译失败的不需要的 applet, 直接关掉
-        # CONFIG_TC is not set
+        CONFIG_SFTP=y
+        CONFIG_FEATURE_SFTP_SERVER=y
+        CONFIG_INSTALL_NO_USR=y
+        CONFIG_FEATURE_PREFER_APPLETS=y
         EOF
 
-        # 批处理所有 (NEW) 选项
+        # oldconfig 只询问 allnoconfig 之后新增的 Kconfig 选项
         yes "" | make oldconfig
         make -j$(nproc)
 
